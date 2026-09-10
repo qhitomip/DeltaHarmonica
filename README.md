@@ -13,7 +13,7 @@
 
 ## 查找 MIDI
 
-界面的“找 MIDI”栏可以按歌曲名或歌手搜索 [MIDIShow](https://www.midishow.com/) 和 [BitMidi](https://bitmidi.com/)。从网站下载 `.mid` 或 `.midi` 文件后，把文件拖回软件即可。
+界面的“找 MIDI”栏可以按歌曲名或歌手搜索 [MIDIShow](https://www.midishow.com/)。从网站下载 `.mid` 或 `.midi` 文件后，把文件拖回软件即可。
 
 ## 自动处理
 

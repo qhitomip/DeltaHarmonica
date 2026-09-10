@@ -168,9 +168,7 @@ class MainWindow(QMainWindow):
         self.midi_search.setClearButtonEnabled(True)
         search_layout.addWidget(self.midi_search, 1)
         self.midishow_button = QPushButton("搜索 MIDIShow")
-        self.bitmidi_button = QPushButton("搜索 BitMidi")
         search_layout.addWidget(self.midishow_button)
-        search_layout.addWidget(self.bitmidi_button)
         page.addWidget(search_card)
 
         section_row = QHBoxLayout()
@@ -246,7 +244,6 @@ class MainWindow(QMainWindow):
         self.countdown.valueChanged.connect(self._save_settings)
         self.hotkey.currentTextChanged.connect(self._hotkey_changed)
         self.midishow_button.clicked.connect(self._search_midishow)
-        self.bitmidi_button.clicked.connect(self._search_bitmidi)
         self.midi_search.returnPressed.connect(self._search_midishow)
         self.performer.state_changed.connect(self.status_label.setText)
         self.performer.progress_changed.connect(lambda value: self.progress.setValue(round(value * 1000)))
@@ -306,13 +303,6 @@ class MainWindow(QMainWindow):
         url = "https://www.midishow.com/"
         if query:
             url = f"https://www.midishow.com/search/result?q={quote_plus(query)}"
-        QDesktopServices.openUrl(QUrl(url))
-
-    def _search_bitmidi(self) -> None:
-        query = self.midi_search.text().strip()
-        url = "https://bitmidi.com/"
-        if query:
-            url = f"https://bitmidi.com/search?q={quote_plus(query)}"
         QDesktopServices.openUrl(QUrl(url))
 
     def _choose_files(self) -> None:
