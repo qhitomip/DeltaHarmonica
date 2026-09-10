@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "delta-harmonica"
+version = "0.1.0"
+description = "Convert MIDI scores into Delta Force harmonica input events."
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "mido>=1.3,<2",
+    "PySide6-Essentials>=6.8,<6.11",
+]
+
+[project.scripts]
+delta-harmonica = "delta_harmonica.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

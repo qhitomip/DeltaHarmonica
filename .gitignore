@@ -1,0 +1,13 @@
+.venv/
+.packages/
+quality-audit/
+build/
+dist/
+*.spec
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.smoke-data/
+.library-smoke/
+ui-preview.png
+.probe-*.wav
