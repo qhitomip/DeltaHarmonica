@@ -92,14 +92,25 @@ class GameInput:
         self._active_key: int | None = None
         self._active_band = ToneBand.NATURAL
 
+    @property
+    def active_band(self) -> ToneBand:
+        return self._active_band
+
     def press(self, game_key: GameKey) -> None:
+        self.prepare_band(game_key.band)
+        self.press_note(game_key)
+
+    def prepare_band(self, band: ToneBand) -> None:
         self.release_note()
-        if game_key.band is not self._active_band:
+        if band is not self._active_band:
             self.release_band()
-            if game_key.band is not ToneBand.NATURAL:
-                down_event, _ = self.MOUSE_EVENTS[game_key.band]
+            if band is not ToneBand.NATURAL:
+                down_event, _ = self.MOUSE_EVENTS[band]
                 self._send_mouse(down_event)
-                self._active_band = game_key.band
+                self._active_band = band
+
+    def press_note(self, game_key: GameKey) -> None:
+        self.release_note()
         self._send_key(game_key.virtual_key, key_up=False)
         self._active_key = game_key.virtual_key
 

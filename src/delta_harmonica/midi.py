@@ -51,10 +51,54 @@ class MidiCandidate:
     channel: int
     notes: tuple[MidiSourceNote, ...]
     score: float
+    programs: tuple[int, ...] = ()
 
     @property
     def display_name(self) -> str:
         return f"{self.track_name} · 通道 {self.channel + 1}"
+
+    @property
+    def instrument_name(self) -> str:
+        if not self.programs:
+            return "未标注乐器"
+        names = [_program_name(program) for program in self.programs[:2]]
+        if len(self.programs) > 2:
+            names.append(f"等 {len(self.programs)} 种")
+        return " / ".join(names)
+
+    @property
+    def duration(self) -> float:
+        return max(note.end for note in self.notes) - min(note.start for note in self.notes)
+
+    @property
+    def pitch_range(self) -> tuple[int, int]:
+        pitches = [note.midi for note in self.notes]
+        return min(pitches), max(pitches)
+
+    @property
+    def median_pitch(self) -> int:
+        pitches = sorted(note.midi for note in self.notes)
+        return pitches[len(pitches) // 2]
+
+    @property
+    def density(self) -> float:
+        return len(self.notes) / max(self.duration, 0.01)
+
+    @property
+    def monophony(self) -> float:
+        return _monophony_ratio(self.notes)
+
+
+@dataclass(frozen=True, slots=True)
+class MidiAnalysis:
+    candidates: tuple[MidiCandidate, ...]
+    recommended_index: int
+    confidence: str
+    confidence_reason: str
+
+    @property
+    def recommended(self) -> MidiCandidate:
+        return self.candidates[self.recommended_index]
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,12 +107,17 @@ class MidiConversionResult:
     transpose: int
     source_note_count: int
     track_name: str
+    track_index: int
+    channel: int
+    selection_confidence: str
+    short_note_count: int
+    tight_transition_count: int
 
 
 class MidiConverter:
     """Convert a Standard MIDI file into a playable monophonic score."""
 
-    def convert(self, source: Path) -> MidiConversionResult:
+    def analyze(self, source: Path) -> MidiAnalysis:
         if not source.is_file():
             raise FileNotFoundError(f"找不到 MIDI 文件：{source}")
         if source.suffix.lower() not in {".mid", ".midi"}:
@@ -89,16 +138,55 @@ class MidiConverter:
         if not candidates:
             raise ValueError("MIDI 中没有找到可演奏的非鼓点音符")
 
-        selected = max(candidates, key=lambda item: item.score)
+        ordered = tuple(sorted(candidates, key=lambda item: item.score, reverse=True))
+        confidence, reason = _selection_confidence(ordered)
+        return MidiAnalysis(
+            candidates=ordered,
+            recommended_index=0,
+            confidence=confidence,
+            confidence_reason=reason,
+        )
+
+    def convert(
+        self,
+        source: Path,
+        *,
+        track_index: int | None = None,
+        channel: int | None = None,
+    ) -> MidiConversionResult:
+        analysis = self.analyze(source)
+        selected = analysis.recommended
+        if track_index is not None and channel is not None:
+            selected = next(
+                (
+                    candidate
+                    for candidate in analysis.candidates
+                    if candidate.track_index == track_index and candidate.channel == channel
+                ),
+                None,
+            )
+            if selected is None:
+                raise ValueError("之前选择的 MIDI 音轨已不存在，请重新选择")
+
         melody = _monophonize(selected.notes)
         if not melody:
             raise ValueError("自动选择的旋律轨道没有有效音符")
         notes, transpose = adapt_midi_to_game_range(melody)
+        short_notes = sum(note.duration < 0.08 for note in notes)
+        tight_transitions = sum(
+            following.start - note.end < 0.025
+            for note, following in zip(notes, notes[1:])
+        )
         return MidiConversionResult(
             notes=notes,
             transpose=transpose,
             source_note_count=len(selected.notes),
             track_name=selected.display_name,
+            track_index=selected.track_index,
+            channel=selected.channel,
+            selection_confidence=analysis.confidence,
+            short_note_count=short_notes,
+            tight_transition_count=tight_transitions,
         )
 
 
@@ -167,12 +255,18 @@ def _collect_candidates(midi_file, tempo_map: TempoMap) -> list[MidiCandidate]: 
         absolute_tick = 0
         active: dict[tuple[int, int], list[tuple[int, int]]] = defaultdict(list)
         by_channel: dict[int, list[MidiSourceNote]] = defaultdict(list)
+        programs_by_channel: dict[int, list[int]] = defaultdict(list)
         for message in track:
             absolute_tick += int(message.time)
             if not hasattr(message, "channel"):
                 continue
             channel = int(message.channel)
             if channel == 9:
+                continue
+            if message.type == "program_change":
+                program = int(message.program)
+                if program not in programs_by_channel[channel]:
+                    programs_by_channel[channel].append(program)
                 continue
             key = (channel, int(getattr(message, "note", -1)))
             if message.type == "note_on" and int(message.velocity) > 0:
@@ -217,13 +311,22 @@ def _collect_candidates(midi_file, tempo_map: TempoMap) -> list[MidiCandidate]: 
                     track_name=track_name,
                     channel=channel,
                     notes=ordered_notes,
-                    score=_candidate_score(track_name, ordered_notes),
+                    score=_candidate_score(
+                        track_name,
+                        ordered_notes,
+                        tuple(programs_by_channel[channel]),
+                    ),
+                    programs=tuple(programs_by_channel[channel]),
                 )
             )
     return result
 
 
-def _candidate_score(name: str, notes: tuple[MidiSourceNote, ...]) -> float:
+def _candidate_score(
+    name: str,
+    notes: tuple[MidiSourceNote, ...],
+    programs: tuple[int, ...] = (),
+) -> float:
     lowered = name.casefold()
     positive_names = (
         "melody", "vocal", "voice", "lead", "solo", "soprano", "right", "rh",
@@ -243,11 +346,7 @@ def _candidate_score(name: str, notes: tuple[MidiSourceNote, ...]) -> float:
     density = len(notes) / max(duration, 0.01)
     pitches = sorted(note.midi for note in notes)
     median_pitch = pitches[len(pitches) // 2]
-    overlaps = sum(
-        current.start < previous.end - 0.01
-        for previous, current in zip(notes, notes[1:])
-    )
-    monophony = 1.0 - overlaps / max(1, len(notes) - 1)
+    monophony = _monophony_ratio(notes)
 
     score += monophony * 5.0
     score += min(3.0, math.log2(len(notes) + 1) * 0.35)
@@ -259,7 +358,60 @@ def _candidate_score(name: str, notes: tuple[MidiSourceNote, ...]) -> float:
         score += 1.0
     elif density > 16.0:
         score -= 2.0
+    if any(32 <= program <= 39 for program in programs):
+        score -= 3.0
+    if any(80 <= program <= 87 for program in programs):
+        score += 1.5
+    if any(64 <= program <= 79 for program in programs):
+        score += 0.8
+    if any(88 <= program <= 95 for program in programs):
+        score -= 1.0
     return score
+
+
+def _monophony_ratio(notes: tuple[MidiSourceNote, ...]) -> float:
+    if len(notes) < 2:
+        return 1.0
+    overlaps = 0
+    active_end = notes[0].end
+    for note in notes[1:]:
+        if note.start < active_end - 0.01:
+            overlaps += 1
+        active_end = max(active_end, note.end)
+    return max(0.0, 1.0 - overlaps / (len(notes) - 1))
+
+
+def _selection_confidence(candidates: tuple[MidiCandidate, ...]) -> tuple[str, str]:
+    top = candidates[0]
+    lowered = top.track_name.casefold()
+    named_melody = any(
+        value in lowered
+        for value in ("melody", "vocal", "voice", "lead", "solo", "旋律", "主奏", "人声", "独奏")
+    )
+    if len(candidates) == 1:
+        if top.monophony >= 0.9 or (named_melody and top.monophony >= 0.75):
+            return "高", "仅有一个有效候选轨道，且旋律结构清晰"
+        return "中", "仅有一个候选轨道，但其中包含较多重叠音符"
+
+    gap = top.score - candidates[1].score
+    if named_melody and top.monophony >= 0.8 and gap >= 0.8:
+        return "高", "轨道名称和单音结构都符合主旋律特征"
+    if top.monophony >= 0.92 and gap >= 2.0:
+        return "高", "该轨道的单音结构明显优于其他候选"
+    if top.monophony >= 0.75 and gap >= 0.75:
+        return "中", "推荐轨道略优于其他候选，建议确认"
+    return "低", "多个轨道特征接近，无法可靠确定主旋律"
+
+
+GM_FAMILIES = (
+    "钢琴", "半音阶打击乐", "风琴", "吉他", "贝斯", "弦乐", "合奏", "铜管",
+    "簧管", "管乐", "合成主奏", "合成铺底", "合成效果", "民族乐器", "打击乐", "音效",
+)
+
+
+def _program_name(program: int) -> str:
+    family = GM_FAMILIES[max(0, min(127, program)) // 8]
+    return f"{family} P{program + 1}"
 
 
 def _monophonize(notes: tuple[MidiSourceNote, ...]) -> list[MidiNote]:

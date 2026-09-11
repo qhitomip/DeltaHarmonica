@@ -8,6 +8,7 @@ import mido
 
 from delta_harmonica.game_io import NOTE_MAP, ToneBand
 from delta_harmonica.midi import MidiConverter, MidiNote, adapt_midi_to_game_range
+from delta_harmonica.performer import PerformanceTiming, build_performance_schedule
 from delta_harmonica.storage import validate_notes
 
 
@@ -108,6 +109,70 @@ class MidiConversionTests(unittest.TestCase):
             for previous, current in zip(result.notes, result.notes[1:])
         ]
         self.assertEqual([2, 2], intervals)
+
+    def test_lists_track_channel_candidates_and_allows_manual_selection(self) -> None:
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "multiple.mid"
+            midi = mido.MidiFile(type=1, ticks_per_beat=480)
+            for name, channel, program, pitches in (
+                ("Lead", 0, 80, (72, 74, 76, 77)),
+                ("Bass", 1, 32, (36, 38, 40, 41)),
+            ):
+                track = mido.MidiTrack()
+                track.append(mido.MetaMessage("track_name", name=name, time=0))
+                track.append(mido.Message("program_change", channel=channel, program=program, time=0))
+                for pitch in pitches:
+                    track.append(mido.Message("note_on", channel=channel, note=pitch, velocity=90, time=0))
+                    track.append(mido.Message("note_off", channel=channel, note=pitch, velocity=0, time=240))
+                midi.tracks.append(track)
+            midi.save(path)
+
+            converter = MidiConverter()
+            analysis = converter.analyze(path)
+            bass = next(candidate for candidate in analysis.candidates if candidate.track_name == "Bass")
+            selected = converter.convert(
+                path,
+                track_index=bass.track_index,
+                channel=bass.channel,
+            )
+
+        self.assertEqual(2, len(analysis.candidates))
+        self.assertIn("Lead", analysis.recommended.track_name)
+        self.assertIn("合成主奏", analysis.recommended.instrument_name)
+        self.assertIn("Bass", selected.track_name)
+
+
+class PerformanceTimingTests(unittest.TestCase):
+    def test_stable_mode_creates_release_gap_without_moving_normal_onsets(self) -> None:
+        notes = [
+            MidiNote(0.0, 0.25, 60),
+            MidiNote(0.25, 0.25, 62),
+            MidiNote(0.5, 0.25, 64),
+        ]
+        timing = PerformanceTiming.for_mode("stable", 100)
+        scheduled = build_performance_schedule(notes, timing)
+
+        self.assertEqual([0.0, 0.25, 0.5], [note.start for note in scheduled])
+        self.assertAlmostEqual(0.025, scheduled[1].start - scheduled[0].end)
+        self.assertTrue(all(note.duration >= 0.08 for note in scheduled))
+
+    def test_stable_mode_expands_passages_that_are_too_dense_for_the_game(self) -> None:
+        notes = [
+            MidiNote(0.0, 0.04, 60),
+            MidiNote(0.04, 0.04, 62),
+            MidiNote(0.08, 0.04, 64),
+        ]
+        timing = PerformanceTiming.for_mode("stable", 100)
+        scheduled = build_performance_schedule(notes, timing)
+
+        for previous, current in zip(scheduled, scheduled[1:]):
+            self.assertGreaterEqual(current.start - previous.end, 0.025 - 1e-9)
+        self.assertTrue(all(note.duration >= 0.08 for note in scheduled))
+
+    def test_original_mode_preserves_midi_timing(self) -> None:
+        notes = [MidiNote(0.1, 0.2, 60), MidiNote(0.3, 0.15, 62)]
+        timing = PerformanceTiming.for_mode("original", 100)
+        self.assertEqual(notes, build_performance_schedule(notes, timing))
 
 
 if __name__ == "__main__":

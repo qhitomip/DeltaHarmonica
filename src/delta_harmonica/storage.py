@@ -32,6 +32,8 @@ def converted_directory() -> Path:
 class Preferences:
     delay_seconds: int = 0
     hotkey: str = "F8"
+    playback_mode: str = "stable"
+    speed_percent: int = 95
 
 
 class PreferencesStore:
@@ -42,7 +44,16 @@ class PreferencesStore:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             delay = max(0, min(30, int(payload.get("delay_seconds", 0))))
-            return Preferences(delay_seconds=delay, hotkey=_normalize_hotkey(payload.get("hotkey")))
+            mode = str(payload.get("playback_mode", "stable"))
+            if mode not in {"stable", "original"}:
+                mode = "stable"
+            speed = max(60, min(120, int(payload.get("speed_percent", 95))))
+            return Preferences(
+                delay_seconds=delay,
+                hotkey=_normalize_hotkey(payload.get("hotkey")),
+                playback_mode=mode,
+                speed_percent=speed,
+            )
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             return Preferences()
 
@@ -60,6 +71,10 @@ class MidiSong:
     imported_at: str
     status: str = "待转换"
     converted_path: str | None = None
+    track_index: int | None = None
+    channel: int | None = None
+    selection_confidence: str = ""
+    track_name: str = ""
 
     @property
     def exists(self) -> bool:

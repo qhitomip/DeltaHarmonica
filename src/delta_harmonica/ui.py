@@ -11,6 +11,8 @@ from PySide6.QtGui import QColor, QCloseEvent, QDesktopServices, QDragEnterEvent
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -28,8 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .midi import MidiConversionResult, MidiConverter
-from .performer import MidiPerformer
+from .midi import MidiAnalysis, MidiCandidate, MidiConversionResult, MidiConverter
+from .performer import MidiPerformer, PerformanceTiming
 from .storage import (
     MidiLibrary,
     PreferencesStore,
@@ -80,7 +82,7 @@ class DropZone(QFrame):
         title = QLabel("拖放 MIDI 曲谱到这里")
         title.setObjectName("dropTitle")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle = QLabel("支持 .mid、.midi · 导入后自动转换")
+        subtitle = QLabel("支持 .mid、.midi · 导入后分析主旋律")
         subtitle.setObjectName("muted")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(title)
@@ -97,12 +99,92 @@ class DropZone(QFrame):
             event.acceptProposedAction()
 
 
+class TrackSelectionDialog(QDialog):
+    def __init__(self, analysis: MidiAnalysis, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.analysis = analysis
+        self.setWindowTitle("选择主旋律音轨")
+        self.resize(1060, 560)
+        self.setMinimumSize(840, 460)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(24, 22, 24, 20)
+        layout.setSpacing(12)
+
+        title = QLabel("请选择要用于口琴演奏的音轨")
+        title.setObjectName("dialogTitle")
+        layout.addWidget(title)
+        confidence = QLabel(
+            f"自动推荐可信度：{analysis.confidence}　{analysis.confidence_reason}"
+        )
+        confidence.setObjectName("muted")
+        confidence.setWordWrap(True)
+        layout.addWidget(confidence)
+
+        self.table = QTableWidget(0, 9)
+        self.table.setHorizontalHeaderLabels(
+            ("推荐", "轨道 / 通道", "名称", "乐器", "音符", "时长", "音域", "单音率", "密度")
+        )
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(42)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+
+        self.table.setRowCount(len(analysis.candidates))
+        for row, candidate in enumerate(analysis.candidates):
+            low, high = candidate.pitch_range
+            recommended = "★ 推荐" if row == analysis.recommended_index else ""
+            values = (
+                recommended,
+                f"{candidate.track_index + 1} / {candidate.channel + 1}",
+                candidate.track_name,
+                candidate.instrument_name,
+                str(len(candidate.notes)),
+                _format_duration(candidate.duration),
+                f"{_note_name(low)} – {_note_name(high)}",
+                f"{candidate.monophony:.0%}",
+                f"{candidate.density:.1f}/秒",
+            )
+            for column, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                item.setData(Qt.ItemDataRole.UserRole, row)
+                if row == analysis.recommended_index:
+                    item.setForeground(QColor("#9eb0ff"))
+                self.table.setItem(row, column, item)
+        if analysis.candidates:
+            self.table.selectRow(analysis.recommended_index)
+        self.table.doubleClicked.connect(self.accept)
+        layout.addWidget(self.table, 1)
+
+        hint = QLabel("单音率越高越适合口琴；钢琴和弦轨会在转换时保留同一时刻的最高音。")
+        hint.setObjectName("muted")
+        layout.addWidget(hint)
+
+        buttons = QDialogButtonBox()
+        use_button = buttons.addButton("使用所选音轨", QDialogButtonBox.ButtonRole.AcceptRole)
+        use_button.setObjectName("primary")
+        buttons.addButton("取消", QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def selected_candidate(self) -> MidiCandidate:
+        rows = self.table.selectionModel().selectedRows()
+        row = rows[0].row() if rows else self.analysis.recommended_index
+        return self.analysis.candidates[row]
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Delta Harmonica")
-        self.resize(1180, 800)
-        self.setMinimumSize(960, 660)
+        self.resize(1240, 820)
+        self.setMinimumSize(1040, 700)
 
         self.library = MidiLibrary()
         self.preferences_store = PreferencesStore()
@@ -162,8 +244,10 @@ class MainWindow(QMainWindow):
         self.midi_search.setPlaceholderText("输入歌曲名或歌手；下载后拖到上方")
         self.midi_search.setClearButtonEnabled(True)
         search_layout.addWidget(self.midi_search, 1)
-        self.midishow_button = QPushButton("搜索 MIDIShow")
-        search_layout.addWidget(self.midishow_button)
+        self.midify_button = QPushButton("搜索 Midify")
+        self.midicloud_button = QPushButton("打开 MIDI云")
+        search_layout.addWidget(self.midify_button)
+        search_layout.addWidget(self.midicloud_button)
         page.addWidget(search_card)
 
         import_row = QHBoxLayout()
@@ -187,8 +271,8 @@ class MainWindow(QMainWindow):
         section_row.addWidget(self.remove_button)
         page.addLayout(section_row)
 
-        self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(("歌曲", "文件", "大小", "状态"))
+        self.table = QTableWidget(0, 5)
+        self.table.setHorizontalHeaderLabels(("歌曲", "文件", "当前音轨", "大小", "状态"))
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -196,8 +280,9 @@ class MainWindow(QMainWindow):
         self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         self.table.setMinimumHeight(290)
         page.addWidget(self.table, 1)
 
@@ -221,9 +306,30 @@ class MainWindow(QMainWindow):
         controls_layout.addSpacing(18)
         controls_layout.addWidget(countdown_label)
         controls_layout.addWidget(self.countdown)
+        controls_layout.addSpacing(18)
+        mode_label = QLabel("演奏模式")
+        self.playback_mode = QComboBox()
+        self.playback_mode.addItem("稳定（推荐）", "stable")
+        self.playback_mode.addItem("原始时序", "original")
+        mode_index = self.playback_mode.findData(self.preferences.playback_mode)
+        self.playback_mode.setCurrentIndex(max(0, mode_index))
+        self.playback_mode.setMinimumWidth(126)
+        self.playback_mode.setToolTip("稳定模式会为游戏保留最短按键时间和松开间隔")
+        controls_layout.addWidget(mode_label)
+        controls_layout.addWidget(self.playback_mode)
+        controls_layout.addSpacing(18)
+        speed_label = QLabel("速度")
+        self.speed = QSpinBox()
+        self.speed.setRange(60, 120)
+        self.speed.setSuffix(" %")
+        self.speed.setValue(self.preferences.speed_percent)
+        self.speed.setMinimumWidth(88)
+        self.speed.setToolTip("100% 为 MIDI 原速度；数值越低，演奏越慢")
+        controls_layout.addWidget(speed_label)
+        controls_layout.addWidget(self.speed)
         controls_layout.addStretch()
 
-        self.analyze_button = QPushButton("重新转换")
+        self.analyze_button = QPushButton("选择音轨")
         self.analyze_button.setEnabled(False)
         controls_layout.addWidget(self.analyze_button)
         page.addWidget(controls)
@@ -250,9 +356,12 @@ class MainWindow(QMainWindow):
         self.remove_button.clicked.connect(self._remove_selected)
         self.analyze_button.clicked.connect(self._convert_selected)
         self.countdown.valueChanged.connect(self._save_settings)
+        self.playback_mode.currentIndexChanged.connect(self._save_settings)
+        self.speed.valueChanged.connect(self._save_settings)
         self.hotkey.currentTextChanged.connect(self._hotkey_changed)
-        self.midishow_button.clicked.connect(self._search_midishow)
-        self.midi_search.returnPressed.connect(self._search_midishow)
+        self.midify_button.clicked.connect(self._search_midify)
+        self.midicloud_button.clicked.connect(self._open_midicloud)
+        self.midi_search.returnPressed.connect(self._search_midify)
         self.performer.state_changed.connect(self.status_label.setText)
         self.performer.progress_changed.connect(lambda value: self.progress.setValue(round(value * 1000)))
         self.performer.failed.connect(self._performance_failed)
@@ -310,11 +419,20 @@ class MainWindow(QMainWindow):
             if self._hotkey_registered:
                 self.status_label.setText(f"启停热键已改为 {hotkey}")
 
-    def _search_midishow(self) -> None:
+    def _search_midify(self) -> None:
         query = self.midi_search.text().strip()
-        url = "https://www.midishow.com/"
+        url = "https://www.midify.cn/"
         if query:
-            url = f"https://www.midishow.com/search/result?q={quote_plus(query)}"
+            search = quote_plus(f"site:midify.cn {query} MIDI")
+            url = f"https://www.baidu.com/s?wd={search}"
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _open_midicloud(self) -> None:
+        query = self.midi_search.text().strip()
+        url = "https://www.midiclouds.com/"
+        if query:
+            search = quote_plus(f"site:midiclouds.com {query} MIDI")
+            url = f"https://www.baidu.com/s?wd={search}"
         QDesktopServices.openUrl(QUrl(url))
 
     def _choose_files(self) -> None:
@@ -327,18 +445,23 @@ class MainWindow(QMainWindow):
         self._refresh_library()
         if imported:
             conversion_errors: list[str] = []
+            converted_count = 0
             for song in imported:
                 try:
-                    self._convert_song(song)
+                    if self._convert_song(song) is not None:
+                        converted_count += 1
                 except Exception as exc:
                     conversion_errors.append(f"{song.title}：{exc}")
             self._refresh_library()
             self._select_song(imported[-1].id)
             if not conversion_errors:
-                self.status_label.setText(
-                    f"已导入并转换 {len(imported)} 首 MIDI · 切到游戏按 "
-                    f"{self.preferences.hotkey} 开始/停止"
-                )
+                if converted_count:
+                    self.status_label.setText(
+                        f"已导入并转换 {converted_count} 首 MIDI · 切到游戏按 "
+                        f"{self.preferences.hotkey} 开始/停止"
+                    )
+                else:
+                    self.status_label.setText("已导入 MIDI，请选择主旋律音轨")
             else:
                 errors.extend(conversion_errors)
         if errors:
@@ -358,6 +481,7 @@ class MainWindow(QMainWindow):
             values = (
                 title,
                 QTableWidgetItem(source.name),
+                QTableWidgetItem(song.track_name or "未选择"),
                 QTableWidgetItem(format_size(song.file_size)),
                 QTableWidgetItem(status),
             )
@@ -397,13 +521,16 @@ class MainWindow(QMainWindow):
             return
         self.progress.setValue(0)
         try:
-            result = self._convert_song(song)
+            result = self._convert_song(song, force_track_choice=True)
         except Exception as exc:
             song.status = "转换失败"
             self.library.update(song)
             self._refresh_library()
             self.status_label.setText(f"转换失败：{exc}")
             QMessageBox.warning(self, "转换失败", str(exc))
+            return
+        if result is None:
+            self.status_label.setText("未更改音轨选择")
             return
         self._refresh_library()
         self._select_song(song.id)
@@ -413,13 +540,59 @@ class MainWindow(QMainWindow):
         )
         self.progress.setValue(1000)
 
-    def _convert_song(self, song) -> MidiConversionResult:  # type: ignore[no-untyped-def]
-        result = self.converter.convert(Path(song.source_path))
+    def _convert_song(
+        self,
+        song,
+        *,
+        force_track_choice: bool = False,
+    ) -> MidiConversionResult | None:  # type: ignore[no-untyped-def]
+        source = Path(song.source_path)
+        analysis = self.converter.analyze(source)
+        selected = next(
+            (
+                candidate
+                for candidate in analysis.candidates
+                if candidate.track_index == song.track_index and candidate.channel == song.channel
+            ),
+            None,
+        )
+        manually_selected = False
+        if force_track_choice or selected is None:
+            if not force_track_choice and analysis.confidence == "高":
+                selected = analysis.recommended
+            else:
+                dialog = TrackSelectionDialog(analysis, self)
+                if dialog.exec() != QDialog.DialogCode.Accepted:
+                    if not song.converted_path:
+                        song.status = "等待选择音轨"
+                        self.library.update(song)
+                    return None
+                selected = dialog.selected_candidate()
+                manually_selected = True
+
+        result = self.converter.convert(
+            source,
+            track_index=selected.track_index,
+            channel=selected.channel,
+        )
         target = converted_directory() / f"{song.id}.json"
         save_performance(target, result.notes, source=song.source_path, transpose=result.transpose)
         song.converted_path = str(target)
+        song.track_index = result.track_index
+        song.channel = result.channel
+        song.track_name = result.track_name
+        song.selection_confidence = "用户选择" if manually_selected else result.selection_confidence
         shift = f"+{result.transpose}" if result.transpose >= 0 else str(result.transpose)
-        song.status = f"可演奏 · {len(result.notes)} 音符 · {result.track_name} · 移调 {shift}"
+        risk_count = result.short_note_count + result.tight_transition_count
+        risk_text = f" · 稳定处理 {risk_count} 处密集输入" if risk_count else ""
+        selection_label = (
+            "用户选择" if song.selection_confidence == "用户选择"
+            else f"{song.selection_confidence}可信度"
+        )
+        song.status = (
+            f"可演奏 · {len(result.notes)} 音符 · {selection_label}"
+            f" · 移调 {shift}{risk_text}"
+        )
         self.library.update(song)
         return result
 
@@ -446,7 +619,11 @@ class MainWindow(QMainWindow):
         if self.performer.is_running:
             return
         self.progress.setValue(0)
-        self.performer.start(notes, self.preferences.delay_seconds)
+        timing = PerformanceTiming.for_mode(
+            self.preferences.playback_mode,
+            self.preferences.speed_percent,
+        )
+        self.performer.start(notes, self.preferences.delay_seconds, timing)
 
     def _performance_failed(self, message: str) -> None:
         self.status_label.setText(message)
@@ -457,7 +634,22 @@ class MainWindow(QMainWindow):
 
     def _save_settings(self) -> None:
         self.preferences.delay_seconds = self.countdown.value()
+        self.preferences.playback_mode = str(self.playback_mode.currentData())
+        self.preferences.speed_percent = self.speed.value()
         self.preferences_store.save(self.preferences)
+
+
+NOTE_NAMES = ("C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B")
+
+
+def _note_name(midi: int) -> str:
+    return f"{NOTE_NAMES[midi % 12]}{midi // 12 - 1}"
+
+
+def _format_duration(seconds: float) -> str:
+    total = max(0, round(seconds))
+    minutes, remaining = divmod(total, 60)
+    return f"{minutes}:{remaining:02d}"
 
 
 def format_size(size: int) -> str:
@@ -478,6 +670,7 @@ QWidget {
 }
 QWidget#appRoot { background: #0b1020; }
 QLabel#appTitle { font-size: 28px; font-weight: 700; }
+QLabel#dialogTitle { font-size: 22px; font-weight: 700; }
 QLabel#sectionTitle { font-size: 18px; font-weight: 650; }
 QLabel#dropTitle { font-size: 18px; font-weight: 650; }
 QLabel#muted { color: #8f9bb3; }
