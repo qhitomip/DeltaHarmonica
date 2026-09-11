@@ -6,11 +6,10 @@ from ctypes import wintypes
 from pathlib import Path
 from urllib.parse import quote_plus
 
-from PySide6.QtCore import QSignalBlocker, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QCloseEvent, QDesktopServices, QDragEnterEvent, QDropEvent, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QButtonGroup,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -23,14 +22,12 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
-    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from . import __version__
 from .midi import MidiConversionResult, MidiConverter
 from .performer import MidiPerformer
 from .storage import (
@@ -104,8 +101,8 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Delta Harmonica")
-        self.resize(1120, 720)
-        self.setMinimumSize(920, 620)
+        self.resize(1180, 800)
+        self.setMinimumSize(960, 660)
 
         self.library = MidiLibrary()
         self.preferences_store = PreferencesStore()
@@ -123,160 +120,68 @@ class MainWindow(QMainWindow):
         root = QWidget()
         root.setObjectName("appRoot")
         self.setCentralWidget(root)
-        shell = QHBoxLayout(root)
-        shell.setContentsMargins(0, 0, 0, 0)
-        shell.setSpacing(0)
+        page = QVBoxLayout(root)
+        page.setContentsMargins(38, 30, 38, 26)
+        page.setSpacing(16)
 
-        sidebar = QFrame()
-        sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(220)
-        sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(18, 24, 18, 20)
-        sidebar_layout.setSpacing(8)
-
-        brand_row = QHBoxLayout()
-        brand_mark = QLabel("♫")
-        brand_mark.setObjectName("brandMark")
-        brand_title = QLabel("Delta Harmonica")
-        brand_title.setObjectName("brandTitle")
-        brand_row.addWidget(brand_mark)
-        brand_row.addWidget(brand_title)
-        brand_row.addStretch()
-        sidebar_layout.addLayout(brand_row)
-        tagline = QLabel("三角洲行动 MIDI 口琴")
-        tagline.setObjectName("muted")
-        sidebar_layout.addWidget(tagline)
-        sidebar_layout.addSpacing(24)
-
-        self.nav_group = QButtonGroup(self)
-        self.nav_group.setExclusive(True)
-        self.library_nav = QPushButton("♫   我的曲库")
-        self.search_nav = QPushButton("⌕   查找 MIDI")
-        self.settings_nav = QPushButton("⚙   演奏设置")
-        self.nav_buttons = (self.library_nav, self.search_nav, self.settings_nav)
-        for index, button in enumerate(self.nav_buttons):
-            button.setObjectName("navButton")
-            button.setCheckable(True)
-            button.setCursor(Qt.CursorShape.PointingHandCursor)
-            self.nav_group.addButton(button, index)
-            sidebar_layout.addWidget(button)
-        self.library_nav.setChecked(True)
-        sidebar_layout.addStretch()
-
+        header = QHBoxLayout()
+        titles = QVBoxLayout()
+        title = QLabel("Delta Harmonica")
+        title.setObjectName("appTitle")
+        subtitle = QLabel("把 MIDI 曲谱转换成《三角洲行动》口琴演奏")
+        subtitle.setObjectName("muted")
         author = QLabel(
             '创作者：<a style="color:#8fa8ff;text-decoration:none" '
             'href="https://space.bilibili.com/501585047">沙拉Sarada</a>'
         )
         author.setOpenExternalLinks(True)
         author.setObjectName("muted")
+        titles.addWidget(title)
+        titles.addWidget(subtitle)
         author_row = QHBoxLayout()
         author_row.setSpacing(6)
         author_row.addWidget(BilibiliIcon())
         author_row.addWidget(author)
         author_row.addStretch()
-        sidebar_layout.addLayout(author_row)
-        version = QLabel(f"Delta Harmonica · {__version__}")
-        version.setObjectName("tinyMuted")
-        sidebar_layout.addWidget(version)
-        shell.addWidget(sidebar)
-
-        self.pages = QStackedWidget()
-        self.pages.setObjectName("contentStack")
-        shell.addWidget(self.pages, 1)
-
-        library_page = QWidget()
-        library_page.setObjectName("contentPage")
-        page = QVBoxLayout(library_page)
-        page.setContentsMargins(28, 24, 28, 20)
-        page.setSpacing(14)
-
-        header = QHBoxLayout()
-        header_titles = QVBoxLayout()
-        page_title = QLabel("我的曲库")
-        page_title.setObjectName("pageTitle")
-        page_subtitle = QLabel("选择一首曲谱，然后切到游戏使用热键演奏")
-        page_subtitle.setObjectName("muted")
-        header_titles.addWidget(page_title)
-        header_titles.addWidget(page_subtitle)
-        header.addLayout(header_titles)
+        titles.addLayout(author_row)
+        header.addLayout(titles)
         header.addStretch()
         self.ready_badge = QLabel(f"●  {self.preferences.hotkey} 热键已就绪")
         self.ready_badge.setObjectName("readyBadge")
-        header.addWidget(self.ready_badge)
+        header.addWidget(self.ready_badge, 0, Qt.AlignmentFlag.AlignTop)
         page.addLayout(header)
 
-        top_actions = QHBoxLayout()
+        search_card = QFrame()
+        search_card.setObjectName("searchCard")
+        search_layout = QHBoxLayout(search_card)
+        search_layout.setContentsMargins(18, 13, 18, 13)
+        search_label = QLabel("找 MIDI")
+        search_label.setObjectName("searchTitle")
+        search_layout.addWidget(search_label)
         self.midi_search = QLineEdit()
-        self.midi_search.setPlaceholderText("在 MIDIShow 查找歌曲")
+        self.midi_search.setPlaceholderText("输入歌曲名或歌手；下载后拖到上方")
         self.midi_search.setClearButtonEnabled(True)
-        top_actions.addWidget(self.midi_search, 1)
-        self.midishow_button = QPushButton("搜索网站")
-        top_actions.addWidget(self.midishow_button)
+        search_layout.addWidget(self.midi_search, 1)
+        self.midishow_button = QPushButton("搜索 MIDIShow")
+        search_layout.addWidget(self.midishow_button)
+        page.addWidget(search_card)
+
+        import_row = QHBoxLayout()
+        import_row.setSpacing(14)
+        self.drop_zone = DropZone()
+        self.drop_zone.setMinimumHeight(88)
+        import_row.addWidget(self.drop_zone, 1)
         self.import_button = QPushButton("选择 MIDI 曲谱")
         self.import_button.setObjectName("primary")
-        top_actions.addWidget(self.import_button)
-        page.addLayout(top_actions)
-
-        selected_card = QFrame()
-        selected_card.setObjectName("selectedCard")
-        selected_layout = QHBoxLayout(selected_card)
-        selected_layout.setContentsMargins(20, 17, 20, 17)
-        selected_info = QVBoxLayout()
-        selected_info.setSpacing(4)
-        self.selected_status = QLabel("等待选择")
-        self.selected_status.setObjectName("goodText")
-        self.selected_title = QLabel("尚未选择 MIDI 曲谱")
-        self.selected_title.setObjectName("selectedTitle")
-        self.selected_meta = QLabel("从下方曲库选择，或导入新的 MIDI 文件")
-        self.selected_meta.setObjectName("muted")
-        selected_info.addWidget(self.selected_status)
-        selected_info.addWidget(self.selected_title)
-        selected_info.addWidget(self.selected_meta)
-        selected_info.addSpacing(5)
-        self.analyze_button = QPushButton("重新转换")
-        self.analyze_button.setEnabled(False)
-        selected_info.addWidget(self.analyze_button, 0, Qt.AlignmentFlag.AlignLeft)
-        selected_layout.addLayout(selected_info, 1)
-
-        divider = QFrame()
-        divider.setObjectName("verticalDivider")
-        divider.setFrameShape(QFrame.Shape.VLine)
-        selected_layout.addWidget(divider)
-        hotkey_panel = QVBoxLayout()
-        hotkey_panel.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hotkey_caption = QLabel("按下开始 · 再按停止")
-        hotkey_caption.setObjectName("muted")
-        hotkey_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.hotkey_display = QLabel(self.preferences.hotkey)
-        self.hotkey_display.setObjectName("hotkeyDisplay")
-        self.hotkey_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hotkey_panel.addWidget(self.hotkey_display)
-        hotkey_panel.addWidget(hotkey_caption)
-        selected_layout.addLayout(hotkey_panel)
-        page.addWidget(selected_card)
+        self.import_button.setMinimumSize(196, 88)
+        import_row.addWidget(self.import_button)
+        page.addLayout(import_row)
 
         section_row = QHBoxLayout()
-        self.library_title = QLabel("曲库")
-        self.library_title.setObjectName("sectionTitle")
-        section_row.addWidget(self.library_title)
+        section_title = QLabel("我的 MIDI 曲谱")
+        section_title.setObjectName("sectionTitle")
+        section_row.addWidget(section_title)
         section_row.addStretch()
-        countdown_label = QLabel("延时")
-        countdown_label.setObjectName("muted")
-        self.countdown = QSpinBox()
-        self.countdown.setRange(0, 30)
-        self.countdown.setSuffix(" 秒")
-        self.countdown.setValue(self.preferences.delay_seconds)
-        self.countdown.setMinimumWidth(92)
-        section_row.addWidget(countdown_label)
-        section_row.addWidget(self.countdown)
-        hotkey_label = QLabel("热键")
-        hotkey_label.setObjectName("muted")
-        self.hotkey = QComboBox()
-        self.hotkey.addItems(list(HOTKEYS))
-        self.hotkey.setCurrentText(self.preferences.hotkey)
-        self.hotkey.setMinimumWidth(86)
-        section_row.addWidget(hotkey_label)
-        section_row.addWidget(self.hotkey)
         self.remove_button = QPushButton("从列表移除")
         self.remove_button.setEnabled(False)
         section_row.addWidget(self.remove_button)
@@ -288,11 +193,40 @@ class MainWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.setMinimumHeight(290)
         page.addWidget(self.table, 1)
+
+        controls = QFrame()
+        controls.setObjectName("controlCard")
+        controls_layout = QHBoxLayout(controls)
+        controls_layout.setContentsMargins(20, 16, 20, 16)
+
+        hotkey_label = QLabel("启停热键")
+        self.hotkey = QComboBox()
+        self.hotkey.addItems(list(HOTKEYS))
+        self.hotkey.setCurrentText(self.preferences.hotkey)
+        self.hotkey.setMinimumWidth(86)
+        countdown_label = QLabel("启动延时")
+        self.countdown = QSpinBox()
+        self.countdown.setRange(0, 30)
+        self.countdown.setSuffix(" 秒")
+        self.countdown.setValue(self.preferences.delay_seconds)
+        controls_layout.addWidget(hotkey_label)
+        controls_layout.addWidget(self.hotkey)
+        controls_layout.addSpacing(18)
+        controls_layout.addWidget(countdown_label)
+        controls_layout.addWidget(self.countdown)
+        controls_layout.addStretch()
+
+        self.analyze_button = QPushButton("重新转换")
+        self.analyze_button.setEnabled(False)
+        controls_layout.addWidget(self.analyze_button)
+        page.addWidget(controls)
 
         status_row = QHBoxLayout()
         self.status_label = QLabel(
@@ -306,149 +240,19 @@ class MainWindow(QMainWindow):
         status_row.addWidget(self.status_label)
         status_row.addWidget(self.progress, 1)
         page.addLayout(status_row)
-        self.pages.addWidget(library_page)
-
-        search_page = QWidget()
-        search_page.setObjectName("contentPage")
-        search_page_layout = QVBoxLayout(search_page)
-        search_page_layout.setContentsMargins(34, 30, 34, 30)
-        search_page_layout.setSpacing(18)
-        search_title = QLabel("查找 MIDI")
-        search_title.setObjectName("pageTitle")
-        search_subtitle = QLabel("输入歌曲名或歌手，在 MIDIShow 下载后直接拖回软件")
-        search_subtitle.setObjectName("muted")
-        search_page_layout.addWidget(search_title)
-        search_page_layout.addWidget(search_subtitle)
-
-        search_card = QFrame()
-        search_card.setObjectName("featureCard")
-        search_card_layout = QVBoxLayout(search_card)
-        search_card_layout.setContentsMargins(24, 22, 24, 22)
-        search_card_layout.setSpacing(12)
-        search_prompt = QLabel("搜索歌曲")
-        search_prompt.setObjectName("sectionTitle")
-        search_card_layout.addWidget(search_prompt)
-        search_input_row = QHBoxLayout()
-        self.search_page_input = QLineEdit()
-        self.search_page_input.setPlaceholderText("例如：晴天 周杰伦")
-        self.search_page_input.setClearButtonEnabled(True)
-        search_input_row.addWidget(self.search_page_input, 1)
-        self.search_page_button = QPushButton("搜索 MIDIShow")
-        self.search_page_button.setObjectName("primary")
-        search_input_row.addWidget(self.search_page_button)
-        search_card_layout.addLayout(search_input_row)
-        search_help = QLabel("网页会在默认浏览器中打开。下载 .mid 或 .midi 文件后导入即可。")
-        search_help.setObjectName("muted")
-        search_card_layout.addWidget(search_help)
-        search_page_layout.addWidget(search_card)
-
-        import_row = QHBoxLayout()
-        self.drop_zone = DropZone()
-        import_row.addWidget(self.drop_zone, 1)
-        self.search_import_button = QPushButton("选择 MIDI 曲谱")
-        self.search_import_button.setObjectName("primary")
-        self.search_import_button.setMinimumSize(180, 82)
-        import_row.addWidget(self.search_import_button)
-        search_page_layout.addLayout(import_row)
-        search_page_layout.addStretch()
-        self.pages.addWidget(search_page)
-
-        settings_page = QWidget()
-        settings_page.setObjectName("contentPage")
-        settings_layout = QVBoxLayout(settings_page)
-        settings_layout.setContentsMargins(34, 30, 34, 30)
-        settings_layout.setSpacing(18)
-        settings_title = QLabel("演奏设置")
-        settings_title.setObjectName("pageTitle")
-        settings_subtitle = QLabel("这些设置会自动保存，下次启动继续使用")
-        settings_subtitle.setObjectName("muted")
-        settings_layout.addWidget(settings_title)
-        settings_layout.addWidget(settings_subtitle)
-
-        settings_card = QFrame()
-        settings_card.setObjectName("featureCard")
-        settings_card_layout = QVBoxLayout(settings_card)
-        settings_card_layout.setContentsMargins(24, 22, 24, 22)
-        settings_card_layout.setSpacing(18)
-        settings_hotkey_row = QHBoxLayout()
-        settings_hotkey_text = QVBoxLayout()
-        settings_hotkey_title = QLabel("全局启停热键")
-        settings_hotkey_title.setObjectName("sectionTitle")
-        settings_hotkey_help = QLabel("切到游戏后按一次开始，再按一次立即停止")
-        settings_hotkey_help.setObjectName("muted")
-        settings_hotkey_text.addWidget(settings_hotkey_title)
-        settings_hotkey_text.addWidget(settings_hotkey_help)
-        settings_hotkey_row.addLayout(settings_hotkey_text, 1)
-        self.settings_hotkey = QComboBox()
-        self.settings_hotkey.addItems(list(HOTKEYS))
-        self.settings_hotkey.setCurrentText(self.preferences.hotkey)
-        self.settings_hotkey.setMinimumWidth(120)
-        settings_hotkey_row.addWidget(self.settings_hotkey)
-        settings_card_layout.addLayout(settings_hotkey_row)
-
-        setting_divider = QFrame()
-        setting_divider.setFrameShape(QFrame.Shape.HLine)
-        setting_divider.setObjectName("horizontalDivider")
-        settings_card_layout.addWidget(setting_divider)
-        settings_delay_row = QHBoxLayout()
-        settings_delay_text = QVBoxLayout()
-        settings_delay_title = QLabel("启动延时")
-        settings_delay_title.setObjectName("sectionTitle")
-        settings_delay_help = QLabel("按下热键后等待指定秒数再开始演奏，默认 0 秒")
-        settings_delay_help.setObjectName("muted")
-        settings_delay_text.addWidget(settings_delay_title)
-        settings_delay_text.addWidget(settings_delay_help)
-        settings_delay_row.addLayout(settings_delay_text, 1)
-        self.settings_countdown = QSpinBox()
-        self.settings_countdown.setRange(0, 30)
-        self.settings_countdown.setSuffix(" 秒")
-        self.settings_countdown.setValue(self.preferences.delay_seconds)
-        self.settings_countdown.setMinimumWidth(120)
-        settings_delay_row.addWidget(self.settings_countdown)
-        settings_card_layout.addLayout(settings_delay_row)
-        settings_layout.addWidget(settings_card)
-
-        key_preview = QFrame()
-        key_preview.setObjectName("selectedCard")
-        key_preview_layout = QHBoxLayout(key_preview)
-        key_preview_layout.setContentsMargins(22, 18, 22, 18)
-        preview_text = QVBoxLayout()
-        preview_title = QLabel("当前设置")
-        preview_title.setObjectName("sectionTitle")
-        self.settings_summary = QLabel(
-            f"{self.preferences.hotkey} 启动/停止 · 延时 {self.preferences.delay_seconds} 秒"
-        )
-        self.settings_summary.setObjectName("muted")
-        preview_text.addWidget(preview_title)
-        preview_text.addWidget(self.settings_summary)
-        key_preview_layout.addLayout(preview_text, 1)
-        self.settings_hotkey_display = QLabel(self.preferences.hotkey)
-        self.settings_hotkey_display.setObjectName("hotkeyDisplay")
-        key_preview_layout.addWidget(self.settings_hotkey_display)
-        settings_layout.addWidget(key_preview)
-        settings_layout.addStretch()
-        self.pages.addWidget(settings_page)
 
         self.setStyleSheet(STYLESHEET)
 
     def _connect_signals(self) -> None:
-        self.library_nav.clicked.connect(lambda: self.pages.setCurrentIndex(0))
-        self.search_nav.clicked.connect(lambda: self.pages.setCurrentIndex(1))
-        self.settings_nav.clicked.connect(lambda: self.pages.setCurrentIndex(2))
         self.import_button.clicked.connect(self._choose_files)
-        self.search_import_button.clicked.connect(self._choose_files)
         self.drop_zone.files_dropped.connect(self._import_files)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         self.remove_button.clicked.connect(self._remove_selected)
         self.analyze_button.clicked.connect(self._convert_selected)
-        self.countdown.valueChanged.connect(self._delay_changed)
-        self.settings_countdown.valueChanged.connect(self._delay_changed)
+        self.countdown.valueChanged.connect(self._save_settings)
         self.hotkey.currentTextChanged.connect(self._hotkey_changed)
-        self.settings_hotkey.currentTextChanged.connect(self._hotkey_changed)
         self.midishow_button.clicked.connect(self._search_midishow)
         self.midi_search.returnPressed.connect(self._search_midishow)
-        self.search_page_button.clicked.connect(self._search_midishow_from_search_page)
-        self.search_page_input.returnPressed.connect(self._search_midishow_from_search_page)
         self.performer.state_changed.connect(self.status_label.setText)
         self.performer.progress_changed.connect(lambda value: self.progress.setValue(round(value * 1000)))
         self.performer.failed.connect(self._performance_failed)
@@ -497,31 +301,17 @@ class MainWindow(QMainWindow):
         self._hotkey_registered = False
 
     def _hotkey_changed(self, hotkey: str) -> None:
-        blockers = [QSignalBlocker(widget) for widget in (self.hotkey, self.settings_hotkey)]
-        self.hotkey.setCurrentText(hotkey)
-        self.settings_hotkey.setCurrentText(hotkey)
-        del blockers
         self.preferences.hotkey = hotkey
         self.performer.hotkey_label = hotkey
         self.preferences_store.save(self.preferences)
-        self.hotkey_display.setText(hotkey)
-        self.settings_hotkey_display.setText(hotkey)
         self.ready_badge.setText(f"●  {hotkey} 热键已就绪")
-        self._refresh_settings_summary()
         if self.isVisible():
             self._register_hotkey()
             if self._hotkey_registered:
                 self.status_label.setText(f"启停热键已改为 {hotkey}")
 
     def _search_midishow(self) -> None:
-        self._open_midishow(self.midi_search.text())
-
-    def _search_midishow_from_search_page(self) -> None:
-        self._open_midishow(self.search_page_input.text())
-
-    @staticmethod
-    def _open_midishow(raw_query: str) -> None:
-        query = raw_query.strip()
+        query = self.midi_search.text().strip()
         url = "https://www.midishow.com/"
         if query:
             url = f"https://www.midishow.com/search/result?q={quote_plus(query)}"
@@ -544,8 +334,6 @@ class MainWindow(QMainWindow):
                     conversion_errors.append(f"{song.title}：{exc}")
             self._refresh_library()
             self._select_song(imported[-1].id)
-            self.pages.setCurrentIndex(0)
-            self.library_nav.setChecked(True)
             if not conversion_errors:
                 self.status_label.setText(
                     f"已导入并转换 {len(imported)} 首 MIDI · 切到游戏按 "
@@ -558,8 +346,6 @@ class MainWindow(QMainWindow):
 
     def _refresh_library(self) -> None:
         songs = self.library.songs
-        self.library_title.setText(f"曲库 · {len(songs)}")
-        self.library_nav.setText(f"♫   我的曲库 · {len(songs)}")
         self.table.setRowCount(len(songs))
         for row, song in enumerate(songs):
             title = QTableWidgetItem(song.title)
@@ -589,18 +375,6 @@ class MainWindow(QMainWindow):
         song = self._selected_song() if enabled else None
         is_midi = bool(song and Path(song.source_path).suffix.lower() in {".mid", ".midi"})
         self.analyze_button.setEnabled(enabled and bool(song and song.exists) and is_midi)
-        if song is None:
-            self.selected_status.setText("等待选择")
-            self.selected_title.setText("尚未选择 MIDI 曲谱")
-            self.selected_meta.setText("从下方曲库选择，或导入新的 MIDI 文件")
-            return
-        self.selected_title.setText(song.title)
-        if not song.exists:
-            self.selected_status.setText("源文件已移动")
-            self.selected_meta.setText(Path(song.source_path).name)
-        else:
-            self.selected_status.setText("已就绪" if song.converted_path else "等待转换")
-            self.selected_meta.setText(f"{Path(song.source_path).name} · {song.status}")
 
     def _selected_song(self):  # type: ignore[no-untyped-def]
         rows = self.table.selectionModel().selectedRows() if self.table.selectionModel() else []
@@ -681,19 +455,9 @@ class MainWindow(QMainWindow):
     def _performance_finished(self) -> None:
         self._selection_changed()
 
-    def _delay_changed(self, seconds: int) -> None:
-        blockers = [QSignalBlocker(widget) for widget in (self.countdown, self.settings_countdown)]
-        self.countdown.setValue(seconds)
-        self.settings_countdown.setValue(seconds)
-        del blockers
-        self.preferences.delay_seconds = seconds
+    def _save_settings(self) -> None:
+        self.preferences.delay_seconds = self.countdown.value()
         self.preferences_store.save(self.preferences)
-        self._refresh_settings_summary()
-
-    def _refresh_settings_summary(self) -> None:
-        self.settings_summary.setText(
-            f"{self.preferences.hotkey} 启动/停止 · 延时 {self.preferences.delay_seconds} 秒"
-        )
 
 
 def format_size(size: int) -> str:
@@ -712,54 +476,34 @@ QWidget {
     font-family: "Microsoft YaHei UI";
     font-size: 14px;
 }
-QWidget#appRoot, QWidget#contentPage, QStackedWidget#contentStack { background: #0b1020; }
-QFrame#sidebar {
-    background: #0e1629;
-    border: none;
-    border-right: 1px solid #202c49;
-}
-QLabel#brandMark {
-    min-width: 32px;
-    min-height: 32px;
-    background: #516dff;
-    color: white;
-    border-radius: 8px;
-    font-size: 20px;
-    font-weight: 700;
-    qproperty-alignment: AlignCenter;
-}
-QLabel#brandTitle { font-size: 17px; font-weight: 700; }
-QLabel#pageTitle { font-size: 26px; font-weight: 700; }
+QWidget#appRoot { background: #0b1020; }
+QLabel#appTitle { font-size: 28px; font-weight: 700; }
 QLabel#sectionTitle { font-size: 18px; font-weight: 650; }
-QLabel#selectedTitle { font-size: 21px; font-weight: 650; }
 QLabel#dropTitle { font-size: 18px; font-weight: 650; }
 QLabel#muted { color: #8f9bb3; }
-QLabel#tinyMuted { color: #64708a; font-size: 12px; }
-QLabel#goodText { color: #70d7aa; font-weight: 650; }
+QLabel#searchTitle { color: #dce6ff; font-weight: 650; }
 QLabel#readyBadge {
     background: #15213c;
-    color: #9fb0de;
-    border: 1px solid #283858;
+    color: #a9b9e8;
+    border: 1px solid #2e3b61;
     border-radius: 13px;
-    padding: 7px 12px;
-}
-QLabel#hotkeyDisplay {
-    color: #a9b8ff;
-    font-size: 32px;
-    font-weight: 700;
-    min-width: 150px;
+    padding: 8px 13px;
 }
 QFrame#dropZone {
     background: #10182c;
     border: 1px dashed #52658f;
     border-radius: 14px;
 }
-QFrame#selectedCard, QFrame#featureCard {
+QFrame#controlCard {
     background: #10182c;
     border: 1px solid #202c49;
     border-radius: 12px;
 }
-QFrame#verticalDivider, QFrame#horizontalDivider { color: #283858; background: #283858; }
+QFrame#searchCard {
+    background: #10182c;
+    border: 1px solid #263657;
+    border-radius: 10px;
+}
 QPushButton {
     background: #1b2541;
     border: 1px solid #34446e;
@@ -770,16 +514,6 @@ QPushButton:hover { background: #263354; }
 QPushButton:disabled { color: #59637a; background: #12192a; border-color: #222b40; }
 QPushButton#primary { background: #516dff; border-color: #6f85ff; color: white; font-weight: 650; }
 QPushButton#primary:hover { background: #627cff; }
-QPushButton#navButton {
-    background: transparent;
-    color: #8f9bb3;
-    border: none;
-    border-radius: 8px;
-    padding: 11px 12px;
-    text-align: left;
-}
-QPushButton#navButton:hover { background: #151f36; color: #dce5fa; }
-QPushButton#navButton:checked { background: #1c2a4c; color: #ffffff; font-weight: 650; }
 QTableWidget {
     background: #0f1628;
     alternate-background-color: #111b30;
