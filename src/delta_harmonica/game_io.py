@@ -126,8 +126,14 @@ class GameInput:
             self._active_band = ToneBand.NATURAL
 
     def release_all(self) -> None:
-        self.release_note()
-        self.release_band()
+        errors = []
+        for release in (self.release_note, self.release_band):
+            try:
+                release()
+            except Exception as exc:
+                errors.append(str(exc))
+        if errors:
+            raise OSError("；".join(errors))
 
     def _send_key(self, virtual_key: int, *, key_up: bool) -> None:
         flags = self.KEY_UP if key_up else 0

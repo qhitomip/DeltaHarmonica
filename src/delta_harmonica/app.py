@@ -1,45 +1,44 @@
 from __future__ import annotations
 
-import os
 import sys
-import traceback
 from pathlib import Path
-
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QApplication
-
-from .ui import MainWindow
 
 
 def main() -> int:
-    midi_source = os.environ.get("DELTA_HARMONICA_MIDI_SMOKE_SOURCE")
-    if midi_source:
-        try:
-            from .midi import MidiConverter
-            from .storage import save_performance
-
-            output = Path(os.environ.get("DELTA_HARMONICA_MIDI_SMOKE_OUTPUT", "midi-smoke-score.json"))
-            result = MidiConverter().convert(Path(midi_source))
-            save_performance(output, result.notes, source=midi_source, transpose=result.transpose)
-            return 0
-        except Exception:
-            log_path = os.environ.get("DELTA_HARMONICA_MIDI_SMOKE_LOG")
-            if log_path:
-                Path(log_path).write_text(traceback.format_exc(), encoding="utf-8")
-            return 2
+    from PySide6.QtGui import QIcon
+    from PySide6.QtWidgets import QApplication, QMessageBox
+    from . import __version__
+    from .single_instance import SingleInstance
+    from .storage import data_directory
+    from .ui import MainWindow
 
     app = QApplication(sys.argv)
+    app.setApplicationVersion(__version__)
     app.setApplicationName("Delta Harmonica")
     app.setOrganizationName("沙拉Sarada")
     app.setOrganizationDomain("https://space.bilibili.com/501585047")
     app.setStyle("Fusion")
-    app.setWindowIcon(QIcon())
+    app.setWindowIcon(QIcon(str(Path(__file__).with_name("assets") / "app.ico")))
+    try:
+        instance = SingleInstance(data_directory(), app)
+        if not instance.acquire():
+            return 0
+    except OSError as exc:
+        QMessageBox.critical(None, "无法启动", str(exc))
+        return 1
+
     window = MainWindow()
+
+    def activate():
+        if window.isMinimized():
+            window.showNormal()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+
+    instance.activated.connect(activate)
+    app.aboutToQuit.connect(instance.close)
     window.show()
-    smoke_exit_ms = "700" if "--smoke-test" in sys.argv else os.environ.get("DELTA_HARMONICA_SMOKE_EXIT_MS")
-    if smoke_exit_ms:
-        QTimer.singleShot(max(1, int(smoke_exit_ms)), app.quit)
     return app.exec()
 
 

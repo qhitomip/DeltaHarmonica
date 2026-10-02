@@ -149,30 +149,27 @@ class PerformanceTimingTests(unittest.TestCase):
             MidiNote(0.25, 0.25, 62),
             MidiNote(0.5, 0.25, 64),
         ]
-        timing = PerformanceTiming.for_mode("stable", 100)
+        timing = PerformanceTiming.for_speed(100)
         scheduled = build_performance_schedule(notes, timing)
 
         self.assertEqual([0.0, 0.25, 0.5], [note.start for note in scheduled])
         self.assertAlmostEqual(0.025, scheduled[1].start - scheduled[0].end)
         self.assertTrue(all(note.duration >= 0.08 for note in scheduled))
 
-    def test_stable_mode_expands_passages_that_are_too_dense_for_the_game(self) -> None:
+    def test_stable_mode_preserves_dense_onsets_and_total_duration(self) -> None:
         notes = [
             MidiNote(0.0, 0.04, 60),
             MidiNote(0.04, 0.04, 62),
             MidiNote(0.08, 0.04, 64),
         ]
-        timing = PerformanceTiming.for_mode("stable", 100)
+        timing = PerformanceTiming.for_speed(100)
         scheduled = build_performance_schedule(notes, timing)
 
-        for previous, current in zip(scheduled, scheduled[1:]):
-            self.assertGreaterEqual(current.start - previous.end, 0.025 - 1e-9)
-        self.assertTrue(all(note.duration >= 0.08 for note in scheduled))
+        self.assertEqual([0.0, 0.04, 0.08], [note.start for note in scheduled])
+        self.assertAlmostEqual(notes[-1].end, scheduled[-1].end)
+        self.assertTrue(all(note.duration > 0 for note in scheduled))
+        self.assertTrue(all(a.end <= b.start for a, b in zip(scheduled, scheduled[1:])))
 
-    def test_original_mode_preserves_midi_timing(self) -> None:
-        notes = [MidiNote(0.1, 0.2, 60), MidiNote(0.3, 0.15, 62)]
-        timing = PerformanceTiming.for_mode("original", 100)
-        self.assertEqual(notes, build_performance_schedule(notes, timing))
 
 
 if __name__ == "__main__":

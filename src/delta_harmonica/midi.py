@@ -133,6 +133,9 @@ class MidiConverter:
         except (OSError, ValueError, EOFError) as exc:
             raise ValueError(f"无法读取 MIDI 文件：{exc}") from exc
 
+        if midi_file.type == 2:
+            raise ValueError("不支持 MIDI Type 2 独立序列，请先导出为 Type 0 或 Type 1")
+
         tempo_map = _build_tempo_map(midi_file)
         candidates = _collect_candidates(midi_file, tempo_map)
         if not candidates:
@@ -154,7 +157,18 @@ class MidiConverter:
         track_index: int | None = None,
         channel: int | None = None,
     ) -> MidiConversionResult:
-        analysis = self.analyze(source)
+        return self.convert_analysis(self.analyze(source), track_index=track_index, channel=channel)
+
+    def convert_analysis(
+        self,
+        analysis: MidiAnalysis,
+        *,
+        track_index: int | None = None,
+        channel: int | None = None,
+    ) -> MidiConversionResult:
+        """Convert the same analyzed snapshot that the user selected and previewed."""
+        if (track_index is None) != (channel is None):
+            raise ValueError("请选择完整的音轨和通道")
         selected = analysis.recommended
         if track_index is not None and channel is not None:
             selected = next(
@@ -302,7 +316,7 @@ def _collect_candidates(midi_file, tempo_map: TempoMap) -> list[MidiCandidate]: 
                 )
 
         for channel, notes in by_channel.items():
-            if len(notes) < 3:
+            if not notes:
                 continue
             ordered_notes = tuple(sorted(notes, key=lambda note: (note.start_tick, note.midi)))
             result.append(
